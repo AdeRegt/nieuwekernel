@@ -166,11 +166,57 @@ typedef struct{
 DIRTABLEENTRY dirent[MAXDIRIDENT];
 int direntcnt = 0;
 
-int cdromfloor = 3;
+char cdromfloor = 0;
 
 void dirBootCDROM(){
-	int i = 0;
+	int selector = 0;
 	char* buffer = (char*) 0x2000;
+	int i = 0;
+	filelistbuffer[selector++] = cdromfloor;
+	filelistbuffer[selector++] = '.';
+	filelistbuffer[selector++] = ';';
+	for(i = 0 ; i < direntcnt ; i++){
+		DIRTABLEENTRY E = dirent[i];
+		if(E.ParntDir==cdromfloor){
+			int y = 0;
+			for(y = 0 ; y < E.LengthOfDirIdent; y++){
+				filelistbuffer[selector++] = E.dirident[y];
+			}
+			filelistbuffer[selector++] = ';';
+		}
+	filelistbuffer[selector++] = E.ParntDir;
+	}
+	readRawCDROM(dirent[cdromfloor-1].ExtLBA,1,buffer);
+	i = 0;
+	for(i = 0 ; i < 2000 ; i++){
+		if(buffer[i]==';'&&buffer[i+1]=='1'){
+			char msg[MAXSIZEFILENAME];
+			int y = 0;
+			for(y = 0 ; y < MAXSIZEFILENAME ; y++){
+				msg[y] = 0x00;
+			}
+			y = 0;
+			while(1){
+				if(buffer[(i-1)-y]==0x00){
+					break;
+				}
+				y++;
+			}
+			y-= 3;
+			int u = 0;
+			for(u = 0 ; u < y+1 ; u++){
+				char deze = buffer[((i-1)-y)+u];
+				filelistbuffer[selector++] = deze;
+			}
+			filelistbuffer[selector++] = ';';
+		}
+	}
+
+//
+// O L D   D I R T A B L E
+//
+
+
 	for(i = 0 ; i < direntcnt ; i++){
 		if(cdromfloor==dirent[i].ParntDir){
 			kernel_print("[DIR:");
