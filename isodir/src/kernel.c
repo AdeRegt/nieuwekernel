@@ -27,6 +27,25 @@ char irq_ata_fired = 0;
 //int cdromskiplength = 0;
 ata_device cdromdevice;
 
+
+#define MAXSIZEFILENAME 30
+#define MAXDIRIDENT 100
+#define MAXPATHSIZE 120
+
+typedef struct{
+        int LengthOfDirIdent;
+        int ExtAttrLngth;
+        int ExtLBA;
+        int ParntDir;
+        char dirident[MAXSIZEFILENAME];
+        int padding;
+}DIRTABLEENTRY;
+
+DIRTABLEENTRY dirent[MAXDIRIDENT];
+int direntcnt = 0;
+
+char cdromfloor = 1;//1
+
 void kernel_main();
 void kernel_print(char* msg);
 void putc(char deze);
@@ -61,12 +80,12 @@ void kernel_main(){
 	keyboard_init();
 	ata_init();
 	initBootCDROM();
-	while(1){
+	int i = 0;
 		FilesystemMountpoint mnt = mounts[selectDevice()];
+	while(1){
 		kernelcall(mnt.dir);
 		selectFile();
-		kernel_print(selectedfile);
-		getc();
+		kernelcall(mnt.loadfile);
 	}
 	for(;;);
 }
@@ -85,15 +104,18 @@ void selectFile(){
 			setColor(i==s?0x5f:0x7F);
 			putc(' ');
 			int z = 0;
+			int t = 0;
 			while(1){
 				char deze = filelistbuffer[e++];
 				if(deze==0x00){fo=1;break;}
 				if(deze==';'){break;}
 				putc(deze);
-				selectedfile[z] = deze;
+				if(i==s){
+					selectedfile[t++] = deze;
+					selectedfile[t] = 0x00;
+				}
 				z++;
 			}
-			selectedfile[z] = 0x00;
 			int q = 0;
 			for(q = z ; q  < 79 ; q++){
 				putc(' ');
@@ -150,41 +172,56 @@ int charstoint(char a,char b,char c,char d){
         return final;
 }
 
-#define MAXSIZEFILENAME 30
-#define MAXDIRIDENT 100
-#define MAXPATHSIZE 120
+void openFileBootCDROM(){
+	if(selectedfile[0]=='*'||selectedfile[0]=='.'){
+		if(selectedfile[1]==0x00||(selectedfile[0]=='.'&&selectedfile[1]==0x00)){
+			DIRTABLEENTRY E = dirent[cdromfloor-1];
+			cdromfloor = E.ParntDir;
+		}else{
+			int i = 0;
+			for( i = 0 ; i < direntcnt ; i++){
+				DIRTABLEENTRY E = dirent[i];
+				int z = 0;
+				while(1){
+					char A = E.dirident[z];
+					char B = selectedfile[1+z];
+					z++;
+					if(B==0x00){
+						break;
+					}
+					if(A!=B){goto notmine;}
+				}
+				cdromfloor = i+1;
+				notmine:
+				continue;
+			}
+		}
+	}else{
 
-typedef struct{
-        int LengthOfDirIdent;
-        int ExtAttrLngth;
-        int ExtLBA;
-        int ParntDir;
-        char dirident[MAXSIZEFILENAME];
-        int padding;
-}DIRTABLEENTRY;
-
-DIRTABLEENTRY dirent[MAXDIRIDENT];
-int direntcnt = 0;
-
-char cdromfloor = 0;
+	}
+}
 
 void dirBootCDROM(){
 	int selector = 0;
 	char* buffer = (char*) 0x2000;
 	int i = 0;
-	filelistbuffer[selector++] = cdromfloor;
+	for(i = 0 ; i < sizeof(filelistbuffer) ; i++){
+		filelistbuffer[i] = 0x00;
+	}
 	filelistbuffer[selector++] = '.';
 	filelistbuffer[selector++] = ';';
 	for(i = 0 ; i < direntcnt ; i++){
 		DIRTABLEENTRY E = dirent[i];
-		if(E.ParntDir==cdromfloor){
+		if(cdromfloor==E.ParntDir){
 			int y = 0;
-			for(y = 0 ; y < E.LengthOfDirIdent; y++){
-				filelistbuffer[selector++] = E.dirident[y];
+			char this;
+			filelistbuffer[selector++] = '*';
+			while((this=E.dirident[y++])!=0x00){
+			//for(y = 0 ; y < E.LengthOfDirIdent; y++){
+				filelistbuffer[selector++] = this;
 			}
 			filelistbuffer[selector++] = ';';
 		}
-	filelistbuffer[selector++] = E.ParntDir;
 	}
 	readRawCDROM(dirent[cdromfloor-1].ExtLBA,1,buffer);
 	i = 0;
@@ -204,6 +241,7 @@ void dirBootCDROM(){
 			}
 			y-= 3;
 			int u = 0;
+			filelistbuffer[selector++] = '~';
 			for(u = 0 ; u < y+1 ; u++){
 				char deze = buffer[((i-1)-y)+u];
 				filelistbuffer[selector++] = deze;
@@ -302,6 +340,10 @@ void initBootCDROM(){
           }
 	//kernel_print(" OK ");
 }
+
+//
+// V I D E O   M A N A G E R
+//
 
 
 char* videomemory = (char*) 0xb8000;
@@ -456,7 +498,7 @@ void ata_device_detect(ata_device dev){
 //		kernel_print(" CDR ");
 		dev.read = (unsigned long)&readRawCDROM;
 		cdromdevice = dev;
-		registerMount((char*)"ATAPIbd",dev,0,0,&dirBootCDROM);
+		registerMount((char*)"ATAPIbd",dev,&openFileBootCDROM,0,&dirBootCDROM);
 	}else if(ata_device_init(dev)){
 		registerMount((char*)"UNKNOWN",dev,0,0,0);
 		//kernel_print(" HDD ");
@@ -526,7 +568,7 @@ void readRawCDROM(long lba,char count,char* locationx){//E
 	//int cnt = 0;
 	ata_int_wait();
 	int size = (((int)inportb(cdromdevice.io_base+5))<<8)|(int)(inportb(cdromdevice.io_base+4));
-//	if(size!=ATAPI_SECTOR_SIZE){kernel_print("FATAL ERROR size!=ATAPI_SECTOR_SIZE");for(;;);}
+	if(size!=ATAPI_SECTOR_SIZE){kernel_print("FATAL ERROR size!=ATAPI_SECTOR_SIZE");for(;;);}
 	//short *readev = (short*) locationx;//0x2000;
 	int i = 0;
 	//ata_int_ready();
@@ -599,8 +641,8 @@ extern char pgetc();
 
 
 char kbd_int(){
-	int x = inportb(0x60);
-	if(x>=0&&x<sizeof(kbdus)){
+	unsigned int x = inportb(0x60);
+	if(x<sizeof(kbdus)){
 		kbdxx = x;
 	}
 	return 0;
