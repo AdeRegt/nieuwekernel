@@ -44,12 +44,37 @@ typedef struct{
 DIRTABLEENTRY dirent[MAXDIRIDENT];
 int direntcnt = 0;
 
+typedef struct{
+        unsigned char lengthofdirrecord;
+        unsigned char extendedattributereconrdlength;
+        unsigned char lba1;
+        unsigned char lba2;
+        unsigned char lba3;
+        unsigned char lba4;
+        unsigned char lba5;
+        unsigned char lba6;
+        unsigned char lba7;
+        unsigned char lba8;
+        unsigned char len[8];
+        unsigned char datum[7];
+        unsigned char flags;
+        unsigned char fileunitsize;
+        unsigned char interleavegap;
+        unsigned long vsn;
+        unsigned char filenamelength;
+        unsigned char filename[MAXSIZEFILENAME];
+}FILETABLEENTRY;
+
+FILETABLEENTRY filent[MAXDIRIDENT];
+int filentcnt = 0;
+
 char cdromfloor = 1;//1
 
 void kernel_main();
 void kernel_print(char* msg);
 void putc(char deze);
 void puti(int a);
+void puth(int a);
 inline unsigned char inportb(unsigned int port);
 inline unsigned short inportw(unsigned int port);
 inline void outportb(unsigned int port,unsigned char value);
@@ -76,16 +101,35 @@ char selectedfile[100];
 
 void kernel_main(){
 	kernel_print("Loading...");
+	mountcount = 0;
+	direntcnt = 0;
+	filentcnt = 0;
+	cdromfloor = 1;
 	lidt();
 	keyboard_init();
 	ata_init();
 	initBootCDROM();
-	int i = 0;
-		FilesystemMountpoint mnt = mounts[selectDevice()];
+	FilesystemMountpoint mnt = mounts[selectDevice()];
 	while(1){
 		kernelcall(mnt.dir);
 		selectFile();
 		kernelcall(mnt.loadfile);
+		if(selectedfile[0]=='~'){
+			cls();
+			kernel_print("[R]un, [D]isplay or Cancel?");
+			int i = 0;
+			char sel = getc();
+			cls();
+			if(sel=='r'){
+				kernelcall(0x2000);
+			}else if(sel=='d'){
+				for(i = 0 ; i < 1000 ; i++){
+					putc(((char*)0x2000)[i]);
+				}
+			}
+			getc();
+			asm volatile("jmp kernel_main");
+		}
 	}
 	for(;;);
 }
@@ -196,15 +240,29 @@ void openFileBootCDROM(){
 				continue;
 			}
 		}
-	}else{
-
+	}else if(selectedfile[0]=='~'){
+		int i = 0;
+		for(i = 0 ; i < filentcnt ; i++){
+			int z = 0;
+			for(z = 0 ; z < (filent[i].filenamelength)-2 ; z++){
+				if(filent[i].filename[z]!=selectedfile[z+1]){
+					goto nope;
+				}
+			}
+			char* buffer = (char*) 0x2000;
+			unsigned long int l = filent[i].lba8 | (filent[i].lba7 << 8) | (filent[i].lba6 << 16) | (filent[i].lba5 << 24);
+			readRawCDROM(l,1,buffer);
+			return;
+			nope:
+			z = 0;
+		}
 	}
 }
 
 void dirBootCDROM(){
 	int selector = 0;
 	char* buffer = (char*) 0x2000;
-	int i = 0;
+	signed int i = 0;
 	for(i = 0 ; i < sizeof(filelistbuffer) ; i++){
 		filelistbuffer[i] = 0x00;
 	}
@@ -225,72 +283,45 @@ void dirBootCDROM(){
 	}
 	readRawCDROM(dirent[cdromfloor-1].ExtLBA,1,buffer);
 	i = 0;
-	for(i = 0 ; i < 2000 ; i++){
+	filentcnt = 0;
+	while(1){
+		
 		if(buffer[i]==';'&&buffer[i+1]=='1'){
-			char msg[MAXSIZEFILENAME];
+			// we gaan eerst proberen om de volledige tekst te krijgen en dan alles kopieren naar de file
+			char sucnt = 1;
+			int intern = 0;
 			int y = 0;
-			for(y = 0 ; y < MAXSIZEFILENAME ; y++){
-				msg[y] = 0x00;
+			while(buffer[i-(y++)]!=sucnt){
+				sucnt++;
 			}
-			y = 0;
-			while(1){
-				if(buffer[(i-1)-y]==0x00){
-					break;
-				}
-				y++;
+			sucnt--;
+			sucnt--;
+			intern += sucnt;
+			intern += 1;
+			intern += 32;
+			int t = 0;
+			for(t = 0 ; t < (33+sucnt) ; t++){
+				((char*)&filent[filentcnt])[t] = buffer[(i-intern)+t];
 			}
-			y-= 3;
-			int u = 0;
 			filelistbuffer[selector++] = '~';
-			for(u = 0 ; u < y+1 ; u++){
-				char deze = buffer[((i-1)-y)+u];
+			//filent[filentcnt].filename[filent[filentcnt].filenamelength] = 0x00;
+			for(t = 0 ; t < (filent[filentcnt].filenamelength)-2 ; t++){
+				char deze = filent[filentcnt].filename[t];
 				filelistbuffer[selector++] = deze;
+				//putc(deze);
 			}
+			//puth(filent[filentcnt].filenamelength);
+			//getc();
 			filelistbuffer[selector++] = ';';
+			filentcnt++;
+		}
+		i++;
+		if(i==20000){
+			break;
 		}
 	}
-
-//
-// O L D   D I R T A B L E
-//
-
-
-	for(i = 0 ; i < direntcnt ; i++){
-		if(cdromfloor==dirent[i].ParntDir){
-			kernel_print("[DIR:");
-			kernel_print((char*)dirent[i].dirident);
-			kernel_print("] ");
-		}
-	}
-	kernel_print("[NOW:");
-        kernel_print((char*)dirent[cdromfloor-1].dirident);
-        kernel_print("] ");
-	readRawCDROM(dirent[cdromfloor-1].ExtLBA,1,buffer);
-	i = 0;
-	for(i = 0 ; i < 2000 ; i++){
-		if(buffer[i]==';'&&buffer[i+1]=='1'){
-			char msg[MAXSIZEFILENAME];
-			int y = 0;
-			for(y = 0 ; y < MAXSIZEFILENAME ; y++){
-				msg[y] = 0x00;
-			}
-			y = 0;
-			while(1){
-				if(buffer[(i-1)-y]==0x00){
-					break;
-				}
-				y++;
-			}
-			y-= 3;
-			int u = 0;
-			for(u = 0 ; u < y+1 ; u++){
-				msg[u] = buffer[((i-1)-y)+u];
-			}
-			kernel_print("[FIL:");
-			kernel_print((char*)msg);
-			kernel_print("]");
-		}
-	}
+	filelistbuffer[selector++] = 0x00;
+	
 }
 
 void initBootCDROM(){
@@ -349,6 +380,8 @@ void initBootCDROM(){
 char* videomemory = (char*) 0xb8000;
 int vidmempoint = 0;
 char background = 0x7f;
+char curx = 0;
+char cury = 0;
 
 void setColor(char x){
 	background = x;
@@ -362,9 +395,21 @@ void kernel_print(char* msg){
 	}
 }
 
+
 void putc(char deze){
-	videomemory[vidmempoint++] = deze;
-        videomemory[vidmempoint++] = background;
+	vidmempoint= (cury*160)+(curx*2);
+	if(deze=='\n'){
+		curx = 0;
+		cury++;
+	}else{
+		videomemory[vidmempoint++] = deze;
+        	videomemory[vidmempoint++] = background;
+        	curx++;
+        	if(curx==80){
+        		curx = 0;
+        		cury++;
+        	}
+        }
 }
 
 char* itoa(int value, char* str, int base) {
@@ -401,17 +446,27 @@ char* itoa(int value, char* str, int base) {
 }
 
 void puti(int a){
-	char* ss = "  ";
+	char* ss = "    ";
 	itoa(a,ss,10);
 	kernel_print(ss);
 }
 
+void puth(int a){
+	char* ss = "  ";
+	itoa(a,ss,16);
+	kernel_print(ss);
+}
+
 void cls(){
+	curx = 0;
+	cury = 0;
 	vidmempoint = 0;
 	int i = 0;
 	for(i = 0 ; i < 8000 ; i++){
 		putc(' ');
 	}
+	curx = 0;
+	cury = 0;
 	vidmempoint = 0;
 }
 
