@@ -17,6 +17,7 @@ typedef struct{
 
 FilesystemMountpoint mounts[10];
 int mountcount = 0;
+#define ATAPI_SECTOR_SIZE 2048
 
 ata_device ata_primairy_master  = {.io_base = 0x1F0, .control = 0x3F6, .slave = 0};
 ata_device ata_primairy_slave   = {.io_base = 0x1F0, .control = 0x3F6, .slave = 1};
@@ -55,7 +56,14 @@ typedef struct{
         unsigned char lba6;
         unsigned char lba7;
         unsigned char lba8;
-        unsigned char len[8];
+        unsigned char len1;
+        unsigned char len2;
+        unsigned char len3;
+        unsigned char len4;
+        unsigned char len5;
+        unsigned char len6;
+        unsigned char len7;
+        unsigned char len8;
         unsigned char datum[7];
         unsigned char flags;
         unsigned char fileunitsize;
@@ -69,6 +77,44 @@ FILETABLEENTRY filent[MAXDIRIDENT];
 int filentcnt = 0;
 
 char cdromfloor = 1;//1
+
+
+typedef struct{
+char    A[1];// 0x7F
+char    B[3];// E L F
+char    bits;//1 = 32 | 2 = 64
+char    endian;//1 = little | 2 = big
+char    ver1;
+char    target;
+char    abi;
+char    unused[7];
+short   type;
+short   machine;
+long    version;
+long    entrypoint;
+long    programheader;
+long    segmentheaders;
+long    flags;
+short   headersize;
+short   sizeprogramheader;
+short   entriesprogramheader;
+short   sizesectionheader;
+short   entriessectionheader;
+short   sectionnamelist;
+}ELFHEADER;
+
+typedef struct{
+long name;
+long type;
+long flags;
+long addr;
+long offset;
+long size;
+long link;
+long info;
+long adralign;
+long entsize;
+}ELFSECTION;
 
 void kernel_main();
 void kernel_print(char* msg);
@@ -116,15 +162,32 @@ void kernel_main(){
 		kernelcall(mnt.loadfile);
 		if(selectedfile[0]=='~'){
 			cls();
-			kernel_print("[R]un, [D]isplay or Cancel?");
-			int i = 0;
-			char sel = getc();
-			cls();
-			if(sel=='r'){
-				kernelcall(0x2000);
-			}else if(sel=='d'){
-				for(i = 0 ; i < 1000 ; i++){
-					putc(((char*)0x2000)[i]);
+			ELFHEADER* headers = (ELFHEADER*)0x2000;
+			ELFHEADER header = headers[0];
+			if((header.A[0]==0x7F&&header.B[0]=='E'&&header.B[1]=='L'&&header.B[2]=='F')){
+				ELFSECTION* progsect = (ELFSECTION*)(0x2000+header.segmentheaders);
+				int i = 0;
+				for(i = 0 ; i < header.entriessectionheader ; i++){
+				        if(progsect[i].addr!=0){
+				                int z = 0;
+				                char* buffer = (char*)progsect[i].addr;
+				                for(z = 0 ; z < progsect[i].size ; z++){
+				                        buffer[z] = ((char*)progsect[i].offset+0x2000)[z];
+				                }
+				        }
+                		}
+                		kernelcall(header.entrypoint);
+			}else{
+				kernel_print("[R]un, [D]isplay or Cancel?");
+				int i = 0;
+				char sel = getc();
+				cls();
+				if(sel=='r'){
+					kernelcall(0x2000);
+				}else if(sel=='d'){
+					for(i = 0 ; i < 1000 ; i++){
+						putc(((char*)0x2000)[i]);
+					}
 				}
 			}
 			getc();
@@ -251,7 +314,8 @@ void openFileBootCDROM(){
 			}
 			char* buffer = (char*) 0x2000;
 			unsigned long int l = filent[i].lba8 | (filent[i].lba7 << 8) | (filent[i].lba6 << 16) | (filent[i].lba5 << 24);
-			readRawCDROM(l,1,buffer);
+			unsigned long int j = filent[i].len8 | (filent[i].len7 << 8) | (filent[i].len6 << 16) | (filent[i].len5 << 24);
+			readRawCDROM(l,(j/ATAPI_SECTOR_SIZE)+1,buffer);
 			return;
 			nope:
 			z = 0;
@@ -582,10 +646,9 @@ void ata_int_wait(){
 
 char read_cmd[12] = {0xA8,0,0,0,0,0,0,0,0,0,0,0};
 short* readw = (short*) &read_cmd;
-#define ATAPI_SECTOR_SIZE 2048
 
 void readRawCDROM(long lba,char count,char* locationx){//E
-	outportb(cdromdevice.io_base+6,0xE0);//|(cdromdevice.slave <<4) | ((lba >> 24) & 0x0f));//cdromdevice.slave & ( 1 << 4 ));
+	outportb(cdromdevice.io_base+6,0xE0|(cdromdevice.slave <<4) | ((lba >> 24) & 0x0f));//cdromdevice.slave & ( 1 << 4 ));
 	// wachtend
 	//int u = 0;
 	//for(u = 0 ; u < 5 ; u++){
@@ -633,7 +696,7 @@ void readRawCDROM(long lba,char count,char* locationx){//E
                 asm volatile("pause"); 
         }
 
-	for(i = 0 ; i < ATAPI_SECTOR_SIZE/2 ; i++){
+	for(i = 0 ; i < (ATAPI_SECTOR_SIZE/2)*count ; i++){
 		short X = inportw(cdromdevice.io_base);
 		char A = X;//(X >> 0x00) & 0xFF;
 		char B = (X >> 0x08); //& 0xFF;
