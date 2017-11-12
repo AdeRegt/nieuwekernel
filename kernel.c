@@ -8,11 +8,12 @@ typedef struct {
 }ata_device;
 
 typedef struct{
-	unsigned char mountname[6];
+	unsigned char mountname[7];
 	ata_device device;
 	unsigned long loadfile;
 	unsigned long writefile;
 	unsigned long dir;
+	int partitionselect;
 }FilesystemMountpoint;
 
 FilesystemMountpoint mounts[10];
@@ -27,6 +28,7 @@ ata_device ata_secondary_slave  = {.io_base = 0x170, .control = 0x376, .slave = 
 char irq_ata_fired = 0;
 //int cdromskiplength = 0;
 ata_device cdromdevice;
+ata_device hdddevice;
 
 
 #define MAXSIZEFILENAME 30
@@ -116,11 +118,20 @@ long adralign;
 long entsize;
 }ELFSECTION;
 
+typedef struct{
+char crap[16-8];
+long lba;
+long size;
+}MBRENTRY;
+MBRENTRY mbrt[4];
+
 void kernel_main();
 void kernel_print(char* msg);
 void putc(char deze);
 void puti(int a);
 void puth(int a);
+void putH(char a);
+void putN(char a);
 inline unsigned char inportb(unsigned int port);
 inline unsigned short inportw(unsigned int port);
 inline void outportb(unsigned int port,unsigned char value);
@@ -129,12 +140,16 @@ void lidt();
 void setInterrupt(int i, unsigned long base);
 void keyboard_init();
 void readRawCDROM(long lba,char count,char* locationx);
+void readRawHDD(long LBA,char count,char* locationx);
 void ata_device_detect(ata_device dev);
 void ata_init();
 void initBootCDROM();
 void dirBootCDROM();
+void openFileBootCDROM();
+void dirFAT();
+void openFileFAT();
 int charstoint(char a,char b,char c,char d);
-void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir);
+void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir,int partitionselect);
 void cls();
 char getc();
 void setColor(char x);
@@ -144,6 +159,7 @@ void selectFile();
 
 char filelistbuffer[500];
 char selectedfile[100];
+FilesystemMountpoint mnt;
 
 void kernel_main(){
 	kernel_print("Loading...");
@@ -154,8 +170,7 @@ void kernel_main(){
 	lidt();
 	keyboard_init();
 	ata_init();
-	initBootCDROM();
-	FilesystemMountpoint mnt = mounts[selectDevice()];
+	mnt = mounts[selectDevice()];
 	while(1){
 		kernelcall(mnt.dir);
 		selectFile();
@@ -249,8 +264,8 @@ int selectDevice(){
 		int i = 0;
 		for( i = 0 ; i < mountcount ; i++){
 			setColor(i==s?0x5f:0x7F);
-			putc(' ');putc(mounts[i].mountname[0]);putc(mounts[i].mountname[1]);putc(mounts[i].mountname[2]);putc(mounts[i].mountname[3]);putc(mounts[i].mountname[4]);putc(mounts[i].mountname[5]);
-			kernel_print("                                                                         ");
+			putc(' ');putc(mounts[i].mountname[0]);putc(mounts[i].mountname[1]);putc(mounts[i].mountname[2]);putc(mounts[i].mountname[3]);putc(mounts[i].mountname[4]);putc(mounts[i].mountname[5]);putc(mounts[i].mountname[6]);
+			kernel_print("                                                                        ");
 		}
 		char x = getc();
 		if(x=='\n'){break;}else if(x==1){s++;}else if(x==2){s--;}
@@ -258,7 +273,7 @@ int selectDevice(){
 	return s;
 }
 
-void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir){
+void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir,int partitionselect){
 	int i = 0;
 	for(i = 0 ; i < 6 ; i++){
 		mounts[mountcount].mountname[i] = mountname[i];
@@ -267,6 +282,7 @@ void registerMount(unsigned char mountname[6],ata_device device,unsigned long lo
 	mounts[mountcount].loadfile = loadfile;
 	mounts[mountcount].writefile = writefile;
 	mounts[mountcount].dir = dir;
+	mounts[mountcount].partitionselect = partitionselect;
 	mountcount++;
 }
 
@@ -278,6 +294,20 @@ int charstoint(char a,char b,char c,char d){
         final |= ( d       );
         return final;
 }
+
+//
+// F A T 3 2   F I L E S Y S T E M   H A N D L E R
+//
+//
+
+void openFileFAT(){}
+
+void dirFAT(){}
+
+//
+// I S O   F I L E S Y S T E M   H A N D L E R
+//
+//
 
 void openFileBootCDROM(){
 	if(selectedfile[0]=='*'||selectedfile[0]=='.'){
@@ -327,7 +357,7 @@ void dirBootCDROM(){
 	int selector = 0;
 	char* buffer = (char*) 0x2000;
 	signed int i = 0;
-	for(i = 0 ; i < sizeof(filelistbuffer) ; i++){
+	for(i = 0 ; i < (signed int)sizeof(filelistbuffer) ; i++){
 		filelistbuffer[i] = 0x00;
 	}
 	filelistbuffer[selector++] = '.';
@@ -465,6 +495,14 @@ void putc(char deze){
 	if(deze=='\n'){
 		curx = 0;
 		cury++;
+	}else if(deze=='\t'){
+		if(curx<10){
+			curx = 10;
+		}else if(curx<20){
+			curx = 20;
+		}else{
+			curx = 30;
+		}
 	}else{
 		videomemory[vidmempoint++] = deze;
         	videomemory[vidmempoint++] = background;
@@ -516,10 +554,35 @@ void puti(int a){
 }
 
 void puth(int a){
-	char* ss = "  ";
-	itoa(a,ss,16);
-	kernel_print(ss);
+	putH(a&0x00ff);
+	putH((a>>8)&0x00ff);
 }
+
+void putN(char a){
+	if(a==0x00){putc('0');}
+	if(a==0x01){putc('1');}
+	if(a==0x02){putc('2');}
+	if(a==0x03){putc('3');}
+	if(a==0x04){putc('4');}
+	if(a==0x05){putc('5');}
+	if(a==0x06){putc('6');}
+	if(a==0x07){putc('7');}
+	if(a==0x08){putc('8');}
+	if(a==0x09){putc('9');}
+	if(a==0x0a){putc('A');}
+	if(a==0x0b){putc('B');}
+	if(a==0x0c){putc('C');}
+	if(a==0x0d){putc('D');}
+	if(a==0x0e){putc('E');}
+	if(a==0x0f){putc('F');}
+}
+
+void putH(char a){
+	putN(a&0x000f);
+	putN((a>>4)&0x000f);
+	
+}
+
 
 void cls(){
 	curx = 0;
@@ -595,6 +658,14 @@ int atapi_device_init(ata_device dev){
 	return 1;
 }
 
+void detectFilesystem(ata_device dev,int selector){
+	char* buffer = (char*) 0x2000;
+	readRawHDD(mbrt[selector].lba,1,buffer);
+	if(buffer[66]==0x28||buffer[66]==0x29){
+		registerMount((unsigned char*)"HDDFAT0",dev,(unsigned long)&openFileFAT,0,(unsigned long)&dirFAT,selector);
+	}
+}
+
 
 // void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir)
 
@@ -612,17 +683,35 @@ void ata_device_detect(ata_device dev){
 
 	if(cl==0xFF&&ch==0xFF){
 		//kernel_print(" NUL ");
-		registerMount((char*)"UNKNOWN",dev,0,0,0);
 	}else if(atapi_device_init(dev)){
 //		kernel_print(" CDR ");
 		dev.read = (unsigned long)&readRawCDROM;
 		cdromdevice = dev;
-		registerMount((char*)"ATAPIbd",dev,&openFileBootCDROM,0,&dirBootCDROM);
+		registerMount((unsigned char*)"CDROM01",dev,(unsigned long)&openFileBootCDROM,0,(unsigned long)&dirBootCDROM,0);
+		initBootCDROM();
 	}else if(ata_device_init(dev)){
-		registerMount((char*)"UNKNOWN",dev,0,0,0);
-		//kernel_print(" HDD ");
+		hdddevice = dev;
+		char* buffer = (char*) 0x2000;
+		readRawHDD(0,1,buffer);
+		char* localtarget = (char*)&mbrt;
+		int i = 0;
+		for(i = 0 ; i < (signed int)(sizeof(MBRENTRY)*4) ; i++){
+			localtarget[i] = buffer[446+i];
+		}
+		if(mbrt[0].lba!=0){
+			detectFilesystem(dev,0);
+		}
+		if(mbrt[1].lba!=0){
+			detectFilesystem(dev,1);
+		}
+		if(mbrt[2].lba!=0){
+			detectFilesystem(dev,2);
+		}
+		if(mbrt[3].lba!=0){
+			detectFilesystem(dev,3);
+		}
+		//registerMount((char*)"HARDISK",dev,0,0,0);
 	}else{
-		registerMount((char*)"UNKNOWN",dev,0,0,0);
 		//kernel_print(" ??? ");
 	}
 }
@@ -634,8 +723,36 @@ void ata_int_ready(){
 void ata_int_wait(){
 	int i = 0;
 	while(((char*)0x10000)[0]!=0x01){
-		i++;//asm volatile("pause");
-		//if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
+		i++;
+	}
+}
+
+//
+// H D D   M A N A G E R
+//
+//
+
+void readRawHDD(long LBA,char count,char* locationx){
+	outportb(hdddevice.io_base+6, 0xE0 | (hdddevice.slave << 4) | ((LBA >> 24) & 0x0F));
+	outportb(hdddevice.io_base+1, 0x00);
+	outportb(hdddevice.io_base+2, (unsigned char) count);
+	outportb(hdddevice.io_base+3, (unsigned char) LBA);
+	outportb(hdddevice.io_base+4, (unsigned char)(LBA >> 8));
+	outportb(hdddevice.io_base+5, (unsigned char)(LBA >> 16));
+	outportb(hdddevice.io_base+7, 0x20);
+	int status;
+        while((status = inportb(hdddevice.io_base+7)) & 0x80 ){
+                if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
+                asm volatile("pause"); 
+        }
+        int U = 0;
+        int i = 0;
+	for(i = 0 ; i < (512/2) ; i++){
+		short X = inportw(hdddevice.io_base);
+		char A = X;
+		char B = (X >> 0x08);
+		locationx[U++] = A;
+		locationx[U++] = B;
 	}
 }
 
