@@ -170,6 +170,35 @@ irq_kbd:
     popa
 ;    add esp,8
     iret
+    
+    
+global irq_mou
+extern mouse_handler
+irq_mou:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+    ;mov ax,0x10
+    ;mov ds,ax
+    ;mov es,ax
+    ;mov fs,ax
+    ;mov gs,ax
+    ;mov eax,esp
+    push eax
+    mov bx,0x60
+    call mouse_handler
+    mov al,0x20
+    out 0x20,al
+    out 0xA0,al
+    pop eax
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    iret
 
 global pgetc
 pgetc:

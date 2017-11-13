@@ -25,6 +25,15 @@ ata_device ata_primairy_slave   = {.io_base = 0x1F0, .control = 0x3F6, .slave = 
 ata_device ata_secondary_master = {.io_base = 0x170, .control = 0x376, .slave = 0};
 ata_device ata_secondary_slave  = {.io_base = 0x170, .control = 0x376, .slave = 1};
 
+typedef struct{
+	unsigned int port;
+}COMPort;
+
+COMPort port1 = {.port = 0x3f8};
+COMPort port2 = {.port = 0x2f8};
+COMPort port3 = {.port = 0x3e8};
+COMPort port4 = {.port = 0x2e8};
+
 char irq_ata_fired = 0;
 //int cdromskiplength = 0;
 ata_device cdromdevice;
@@ -156,6 +165,11 @@ void setColor(char x);
 int selectDevice();
 void kernelcall(long address);
 void selectFile();
+void mouse_init();
+void serials_init();
+void init_serial(COMPort port);
+char read_serial(COMPort port);
+void write_serial(COMPort port,char a);
 
 char filelistbuffer[500];
 char selectedfile[100];
@@ -169,7 +183,9 @@ void kernel_main(){
 	cdromfloor = 1;
 	lidt();
 	keyboard_init();
+	mouse_init();
 	ata_init();
+	serials_init();
 	mnt = mounts[selectDevice()];
 	while(1){
 		kernelcall(mnt.dir);
@@ -212,6 +228,60 @@ void kernel_main(){
 	for(;;);
 }
 
+
+//
+// S E R I A L   P O R T   C O N T R O L L 
+//
+//
+
+void serials_init(){
+	init_serial(port1);
+	init_serial(port2);
+	init_serial(port3);
+	init_serial(port4);
+}
+
+void init_serial(COMPort port){
+	int PORT = port.port;
+	outportb(PORT + 1, 0x00);    // Disable all interrupts
+   	outportb(PORT + 3, 0x80);    // Enable DLAB (set baud rate divisor)
+   	outportb(PORT + 0, 0x03);    // Set divisor to 3 (lo byte) 38400 baud
+   	outportb(PORT + 1, 0x00);    //                  (hi byte)
+   	outportb(PORT + 3, 0x03);    // 8 bits, no parity, one stop bit
+   	outportb(PORT + 2, 0xC7);    // Enable FIFO, clear them, with 14-byte threshold
+   	outportb(PORT + 4, 0x0B);    // IRQs enabled, RTS/DSR set
+}
+
+int serial_received(COMPort port) {
+	int PORT = port.port;
+   return inportb(PORT + 5) & 1;
+}
+ 
+char read_serial(COMPort port) {
+	int PORT = port.port;
+   while (serial_received(port) == 0);
+ 
+   return inportb(PORT);
+}
+
+int is_transmit_empty(COMPort port) {
+	int PORT = port.port;
+   return inportb(PORT + 5) & 0x20;
+}
+ 
+void write_serial(COMPort port,char a) {
+	int PORT = port.port;
+   while (is_transmit_empty(port) == 0);
+ 
+   outportb(PORT,a);
+}
+
+
+//
+// G L O B A L   F I L E S Y S T E M   C O N T R O L L 
+//
+//
+
 void selectFile(){
 	int s = 0;
 	while(1){
@@ -253,6 +323,7 @@ void selectFile(){
 void kernelcall(long address){ 
 	asm volatile ("call %0": : "r"(address));
 }
+
 
 int selectDevice(){
 	int s = 0;
@@ -302,7 +373,16 @@ int charstoint(char a,char b,char c,char d){
 
 void openFileFAT(){}
 
-void dirFAT(){}
+void dirFAT(){
+	char* buffer = (char*) 0x2000;
+	readRawHDD(mbrt[mnt.partitionselect].lba,1,buffer);
+	short locroot = (buffer[14]<<8)|buffer[15];
+//	puth(locroot);putc(' ');
+	readRawHDD(mbrt[mnt.partitionselect].lba+32,1,buffer);
+	int i = 0;
+	for(i = 0 ; i < 512 ; i++){putH(buffer[i]);putc(' ');}
+	getc();
+}
 
 //
 // I S O   F I L E S Y S T E M   H A N D L E R
@@ -464,6 +544,95 @@ void initBootCDROM(){
 		direntcnt++;
           }
 	//kernel_print(" OK ");
+}
+
+//
+// M O U S E   D R I V E R
+//
+//
+
+void mouse_write(unsigned char a_write){
+	//Wait to be able to send a command
+	mouse_wait(1);
+	//Tell the mouse we are sending a command
+	outportb(0x64, 0xD4);
+	//Wait for the final part
+	mouse_wait(1);
+	//Finally write
+	outportb(0x60, a_write);
+}
+
+unsigned char mouse_read(){
+	//Get response from mouse
+	mouse_wait(0);
+	return inportb(0x60);
+}
+
+void mouse_wait(unsigned char type){
+  unsigned int _time_out=100000;
+  if(type==0){
+    while(_time_out--) {
+      if((inportb(0x64) & 1)==1){
+        return;
+      }
+    }
+    if(_time_out==0){kernel_print("Mouse not pressent. Press any key to continue");getc();}
+    return;
+  }
+  else{
+    while(_time_out--) {
+      if((inportb(0x64) & 2)==0){
+        return;
+      }
+    }
+    if(_time_out==0){kernel_print("Mouse not pressent. Press any key to continue");getc();}
+    return;
+  }
+}
+
+int mousex = 0;
+int mousey = 0;
+void mouse_handler(){
+  static unsigned char cycle = 0;
+  static char mouse_bytes[3];
+  mouse_bytes[cycle++] = inportb(0x60);
+ 
+  if (cycle == 3) { // if we have all the 3 bytes...
+    cycle = 0; // reset the counter
+    // do what you wish with the bytes, this is just a sample
+    if ((mouse_bytes[0] & 0x80) || (mouse_bytes[0] & 0x40))
+      return; // the mouse only sends information about overflowing, do not care about it and return
+    if (!(mouse_bytes[0] & 0x20))
+      mousey |= 0xFFFFFF00; //delta-y is a negative value
+    if (!(mouse_bytes[0] & 0x10))
+      mousex |= 0xFFFFFF00; //delta-x is a negative value
+    if (mouse_bytes[0] & 0x4)
+      kernel_print("Middle button is pressed!n");
+    if (mouse_bytes[0] & 0x2)
+      kernel_print("Right button is pressed!n");
+    if (mouse_bytes[0] & 0x1)
+      kernel_print("Left button is pressed!n");
+    // do what you want here, just replace the puts's to execute an action for each button
+    // to use the coordinate data, use mouse_bytes[1] for delta-x, and mouse_bytes[2] for delta-y
+  }
+}
+
+void mouse_init(){
+	mouse_wait(1);
+	outportb(0x64,0xA8);
+	mouse_wait(1);
+	outportb(0x64,0x20);
+	unsigned char status_byte;
+	mouse_wait(0);
+	status_byte = (inportb(0x60) | 2);
+	mouse_wait(1);
+	outportb(0x64, 0x60);
+	mouse_wait(1);
+	outportb(0x60, status_byte);
+	mouse_write(0xF6);
+	mouse_read();
+	mouse_write(0xF4);
+	mouse_read();
 }
 
 //
@@ -954,6 +1123,7 @@ void setInterrupt(int i, unsigned long base) {
 
 extern void irq_ata();
 extern void irq_kbd();
+extern void irq_mou();
 
 /**
  * Let the CPU know where the idt is
@@ -983,6 +1153,7 @@ void lidt() {
     //}
     setInterrupt(32+1, (unsigned long) &irq_kbd);
     setInterrupt(32+14, (unsigned long) &irq_ata);
+    setInterrupt(32+12, (unsigned long) &irq_mou);
     idtp.limit = (sizeof (struct idt_entry) * IDT_SIZE) - 1;
     idtp.base = (unsigned int) &idt;
     asm volatile("lidt idtp\nsti");

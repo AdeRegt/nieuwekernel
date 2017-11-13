@@ -17,9 +17,9 @@ cp boot.asm isodir/src/boot.asm
 cp linker.ld isodir/src/linker.ld
 cp build.sh isodir/src/build.sh
 grub-mkrescue -o myos.iso isodir
+cp myos.iso /media/sf_osdev/myiso.iso
+cp -R * /media/sf_osdev/nieuwekernel
 qemu-system-i386 -cdrom myos.iso
-sudo cp myos.iso /media/sf_osdev/myiso.iso
-sudo cp -R * /media/sf_osdev/nieuwekernel
 else
   echo the file is not multiboot
 fi
