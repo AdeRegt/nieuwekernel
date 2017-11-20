@@ -134,6 +134,19 @@ long size;
 }MBRENTRY;
 MBRENTRY mbrt[4];
 
+typedef struct{
+	unsigned char filename[12];
+	unsigned char attributes; // 0x00 deletedfile | 0x01 normal file | 0x02 directory
+	unsigned long LBA;
+	unsigned long sectorcount;
+	unsigned long sizeinlastsector;
+}SFSDirectoryEntry;
+
+typedef struct{
+	unsigned long parentfile;
+	SFSDirectoryEntry ent[10];
+}SFSDirectory;
+
 void kernel_main();
 void kernel_print(char* msg);
 void putc(char deze);
@@ -170,10 +183,17 @@ void serials_init();
 void init_serial(COMPort port);
 char read_serial(COMPort port);
 void write_serial(COMPort port,char a);
+void initTasking();
+void yield();
 
 char filelistbuffer[500];
 char selectedfile[100];
 FilesystemMountpoint mnt;
+char* videomemory = (char*) 0xb8000;
+int vidmempoint = 0;
+char background = 0x7f;
+char curx = 0;
+char cury = 0;
 
 void kernel_main(){
 	kernel_print("Loading...");
@@ -186,6 +206,11 @@ void kernel_main(){
 	mouse_init();
 	ata_init();
 	serials_init();
+	initTasking();
+	kernel_print("Ik begin" );
+	yield();
+	kernel_print("I returned...yay!");
+	getc();
 	mnt = mounts[selectDevice()];
 	while(1){
 		kernelcall(mnt.dir);
@@ -260,7 +285,6 @@ int serial_received(COMPort port) {
 char read_serial(COMPort port) {
 	int PORT = port.port;
    while (serial_received(port) == 0);
- 
    return inportb(PORT);
 }
 
@@ -366,6 +390,20 @@ int charstoint(char a,char b,char c,char d){
         return final;
 }
 
+
+//
+// S F S   F I L E S Y S T E M   H A N D L E R
+//
+//
+
+void openFileSFS(){
+
+}
+
+void dirSFS(){
+
+}
+
 //
 // F A T 3 2   F I L E S Y S T E M   H A N D L E R
 //
@@ -376,11 +414,15 @@ void openFileFAT(){}
 void dirFAT(){
 	char* buffer = (char*) 0x2000;
 	readRawHDD(mbrt[mnt.partitionselect].lba,1,buffer);
-	short locroot = (buffer[14]<<8)|buffer[15];
-//	puth(locroot);putc(' ');
-	readRawHDD(mbrt[mnt.partitionselect].lba+32,1,buffer);
+	short bytesperfat = ((buffer[11])|(buffer[12]<<8));;
+	char sectorspercluster = buffer[13];
+	long epistel = buffer[0x2c+3] | (buffer[0x2c+2]<< 8) | (buffer[0x2c+1] << 16) | (buffer[0x2c+0] << 24);//((long*)buffer[0x2c])[0];
+	//putH(swap(0xAB));putc(' ');
+	long locroot = 4096;//sectorspercluster*epistel;//0x8000;//0;
+	//cls();
+	readRawHDD(mbrt[mnt.partitionselect].lba+locroot,1,buffer);
 	int i = 0;
-	for(i = 0 ; i < 512 ; i++){putH(buffer[i]);putc(' ');}
+	for(i = 0 ; i < 512 ; i++){putc(buffer[i]);}
 	getc();
 }
 
@@ -551,6 +593,14 @@ void initBootCDROM(){
 //
 //
 
+void update_cursor(int x, int y){
+	unsigned short pos = y * 80 + x;
+	outportb(0x3D4, 0x0F);
+	outportb(0x3D5, (unsigned char) (pos & 0xFF));
+	outportb(0x3D4, 0x0E);
+	outportb(0x3D5, (unsigned char) ((pos >> 8) & 0xFF));
+}
+
 void mouse_write(unsigned char a_write){
 	//Wait to be able to send a command
 	mouse_wait(1);
@@ -602,10 +652,22 @@ void mouse_handler(){
     // do what you wish with the bytes, this is just a sample
     if ((mouse_bytes[0] & 0x80) || (mouse_bytes[0] & 0x40))
       return; // the mouse only sends information about overflowing, do not care about it and return
-    if (!(mouse_bytes[0] & 0x20))
-      mousey |= 0xFFFFFF00; //delta-y is a negative value
-    if (!(mouse_bytes[0] & 0x10))
-      mousex |= 0xFFFFFF00; //delta-x is a negative value
+    if (!(mouse_bytes[0] & 0x20)){
+    	if(mouse_bytes[2]==0xff){
+    	mousey += 1;
+    	}else if(mouse_bytes[2]==0x01){
+    	mousey -= 1;
+    	}
+    }
+      //mousey |= 0xFFFFFF00; //delta-y is a negative value
+    if (!(mouse_bytes[0] & 0x10)){
+    	if(mouse_bytes[1]==0xff){
+    	mousex += 1;
+    	}else if(mouse_bytes[1]==0x01){
+    	mousex -= 1;
+    	}
+    }
+      //mousex |= 0xFFFFFF00; //delta-x is a negative value
     if (mouse_bytes[0] & 0x4)
       kernel_print("Middle button is pressed!n");
     if (mouse_bytes[0] & 0x2)
@@ -614,6 +676,13 @@ void mouse_handler(){
       kernel_print("Left button is pressed!n");
     // do what you want here, just replace the puts's to execute an action for each button
     // to use the coordinate data, use mouse_bytes[1] for delta-x, and mouse_bytes[2] for delta-y
+    //if(mousex<0){mousex=1;}if(mousey<0){mousey=1;}
+    //cls();
+    if(mousex<0||mousex>50){mousex=20;}
+    if(mousey<0||mousey>20){mousey=10;}
+    curx = 0;cury = 0;
+    putH(mouse_bytes[1]);putc(' ');putH(mouse_bytes[2]);putc(' ');putH(mousex);putc(' ');putH(mousey);putc(' ');
+    update_cursor(mousex,mousey);
   }
 }
 
@@ -640,11 +709,6 @@ void mouse_init(){
 //
 
 
-char* videomemory = (char*) 0xb8000;
-int vidmempoint = 0;
-char background = 0x7f;
-char curx = 0;
-char cury = 0;
 
 void setColor(char x){
 	background = x;
@@ -747,8 +811,8 @@ void putN(char a){
 }
 
 void putH(char a){
-	putN(a&0x000f);
 	putN((a>>4)&0x000f);
+	putN(a&0x000f);
 	
 }
 
@@ -828,10 +892,16 @@ int atapi_device_init(ata_device dev){
 }
 
 void detectFilesystem(ata_device dev,int selector){
-	char* buffer = (char*) 0x2000;
-	readRawHDD(mbrt[selector].lba,1,buffer);
-	if(buffer[66]==0x28||buffer[66]==0x29){
+	if((mbrt[selector].crap[4])==0x0C){
 		registerMount((unsigned char*)"HDDFAT0",dev,(unsigned long)&openFileFAT,0,(unsigned long)&dirFAT,selector);
+	}else if((mbrt[selector].crap[4])==0x83){
+		registerMount((unsigned char*)"HDDEXT0",dev,(unsigned long)&openFileFAT,0,(unsigned long)&dirFAT,selector);
+	}else if((mbrt[selector].crap[4])==0x19){
+		registerMount((unsigned char*)"HDDSFS0",dev,(unsigned long)&openFileSFS,0,(unsigned long)&dirSFS,selector);
+	}else if((mbrt[selector].crap[4])==0x00){
+		registerMount((unsigned char*)"EMPTY  ",dev,(unsigned long)&openFileSFS,0,(unsigned long)&dirSFS,selector);
+	}else{
+		registerMount((unsigned char*)"UNKNOWN",dev,(unsigned long)&openFileSFS,0,(unsigned long)&dirSFS,selector);
 	}
 }
 
@@ -867,18 +937,10 @@ void ata_device_detect(ata_device dev){
 		for(i = 0 ; i < (signed int)(sizeof(MBRENTRY)*4) ; i++){
 			localtarget[i] = buffer[446+i];
 		}
-		if(mbrt[0].lba!=0){
-			detectFilesystem(dev,0);
-		}
-		if(mbrt[1].lba!=0){
-			detectFilesystem(dev,1);
-		}
-		if(mbrt[2].lba!=0){
-			detectFilesystem(dev,2);
-		}
-		if(mbrt[3].lba!=0){
-			detectFilesystem(dev,3);
-		}
+		detectFilesystem(dev,0);
+		detectFilesystem(dev,1);
+		detectFilesystem(dev,2);
+		detectFilesystem(dev,3);
 		//registerMount((char*)"HARDISK",dev,0,0,0);
 	}else{
 		//kernel_print(" ??? ");
@@ -1205,3 +1267,70 @@ inline void outportw(unsigned int port,unsigned short value){
 // -------------------------------------------
 // END FROM NOPE OS
 //
+
+//
+// M U L T I T A S K I N G
+// TutorialURL: http://wiki.osdev.org/Kernel_Multitasking
+//
+
+typedef struct {
+    unsigned long eax;
+    unsigned long ebx;
+    unsigned long ecx;
+    unsigned long edx;
+    unsigned long esi;
+    unsigned long edi;
+    unsigned long esp;
+    unsigned long ebp;
+    unsigned long eip;
+    unsigned long eflags;
+    unsigned long cr3;
+} Registers;
+ 
+typedef struct {
+    Registers regs;
+    struct Task *next;
+} Task;
+extern void switchTask(unsigned long a,unsigned long b);
+ 
+static Task *runningTask;
+static Task mainTask;
+static Task otherTask;
+ 
+static void otherMain() {
+    kernel_print("Hello multitasking world!"); // Not implemented here...
+    yield();
+}
+ 
+void initTasking() {
+    // Get EFLAGS and CR3
+    asm volatile("movl %%cr3, %%eax; movl %%eax, %0;":"=m"(mainTask.regs.cr3)::"%eax");
+    asm volatile("pushfl; movl (%%esp), %%eax; movl %%eax, %0; popfl;":"=m"(mainTask.regs.eflags)::"%eax");
+    register long counter asm("esp");
+ 	mainTask.regs.esp = counter;
+    createTask(&otherTask, otherMain, mainTask.regs.eflags, (unsigned long*)mainTask.regs.cr3);
+    mainTask.next = &otherTask;
+    otherTask.next = &mainTask;
+ 
+    runningTask = &mainTask;
+}
+ 
+void createTask(Task *task, void (*main)(), unsigned long flags, unsigned long *pagedir) {
+    task->regs.eax = 0;
+    task->regs.ebx = 0;
+    task->regs.ecx = 0;
+    task->regs.edx = 0;
+    task->regs.esi = 0;
+    task->regs.edi = 0;
+    task->regs.eflags = flags;
+    task->regs.eip = (unsigned long) main;
+    task->regs.cr3 = (unsigned long) pagedir;
+    task->regs.esp = (unsigned long) mainTask.regs.esp;//allocPage() + 0x1000; // Not implemented here
+    task->next = 0;
+}
+ 
+void yield() {
+    Task *last = runningTask;
+    runningTask = runningTask->next;
+    switchTask((unsigned long)&last->regs, (unsigned long)&runningTask->regs);
+}

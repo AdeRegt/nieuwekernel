@@ -3,8 +3,9 @@ rm -f kernel.o
 rm -f myos.bin
 nasm -felf32 boot.asm -o boot.o
 gcc -c kernel.c -o kernel.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra
+as switch.a -o switch.o
 #ld -n -T linker.ld -o myos.bin -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
-ld -n -T linker.ld -o myos.bin  boot.o kernel.o
+ld -n -T linker.ld -o myos.bin  boot.o kernel.o switch.o
 
 if grub-file --is-x86-multiboot myos.bin; then
 echo multiboot confirmed
