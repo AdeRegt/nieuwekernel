@@ -1,199 +1,40 @@
-typedef struct {
-	unsigned int io_base;
-	unsigned int control;
-	unsigned int slave;
-	unsigned long read;
-	unsigned long write;
-	unsigned long eject;
-}ata_device;
-
-typedef struct{
-	unsigned char mountname[7];
-	ata_device device;
-	unsigned long loadfile;
-	unsigned long writefile;
-	unsigned long dir;
-	int partitionselect;
-}FilesystemMountpoint;
-
+#include "sos.h"
 FilesystemMountpoint mounts[10];
-int mountcount = 0;
-#define ATAPI_SECTOR_SIZE 2048
+unsigned int mountcount = 0;
 
 ata_device ata_primairy_master  = {.io_base = 0x1F0, .control = 0x3F6, .slave = 0};
 ata_device ata_primairy_slave   = {.io_base = 0x1F0, .control = 0x3F6, .slave = 1};
 ata_device ata_secondary_master = {.io_base = 0x170, .control = 0x376, .slave = 0};
 ata_device ata_secondary_slave  = {.io_base = 0x170, .control = 0x376, .slave = 1};
 
-typedef struct{
-	unsigned int port;
-}COMPort;
-
 COMPort port1 = {.port = 0x3f8};
 COMPort port2 = {.port = 0x2f8};
 COMPort port3 = {.port = 0x3e8};
 COMPort port4 = {.port = 0x2e8};
 
-char irq_ata_fired = 0;
-//int cdromskiplength = 0;
+unsigned char irq_ata_fired = 0;
 ata_device cdromdevice;
 ata_device hdddevice;
 
-
-#define MAXSIZEFILENAME 30
-#define MAXDIRIDENT 100
-#define MAXPATHSIZE 120
-
-typedef struct{
-        int LengthOfDirIdent;
-        int ExtAttrLngth;
-        int ExtLBA;
-        int ParntDir;
-        char dirident[MAXSIZEFILENAME];
-        int padding;
-}DIRTABLEENTRY;
-
 DIRTABLEENTRY dirent[MAXDIRIDENT];
-int direntcnt = 0;
-
-typedef struct{
-        unsigned char lengthofdirrecord;
-        unsigned char extendedattributereconrdlength;
-        unsigned char lba1;
-        unsigned char lba2;
-        unsigned char lba3;
-        unsigned char lba4;
-        unsigned char lba5;
-        unsigned char lba6;
-        unsigned char lba7;
-        unsigned char lba8;
-        unsigned char len1;
-        unsigned char len2;
-        unsigned char len3;
-        unsigned char len4;
-        unsigned char len5;
-        unsigned char len6;
-        unsigned char len7;
-        unsigned char len8;
-        unsigned char datum[7];
-        unsigned char flags;
-        unsigned char fileunitsize;
-        unsigned char interleavegap;
-        unsigned long vsn;
-        unsigned char filenamelength;
-        unsigned char filename[MAXSIZEFILENAME];
-}FILETABLEENTRY;
+unsigned int direntcnt = 0;
 
 FILETABLEENTRY filent[MAXDIRIDENT];
 int filentcnt = 0;
+unsigned char cdromfloor = 1;//1
 
-char cdromfloor = 1;//1
-
-
-typedef struct{
-char    A[1];// 0x7F
-char    B[3];// E L F
-char    bits;//1 = 32 | 2 = 64
-char    endian;//1 = little | 2 = big
-char    ver1;
-char    target;
-char    abi;
-char    unused[7];
-short   type;
-short   machine;
-long    version;
-long    entrypoint;
-long    programheader;
-long    segmentheaders;
-long    flags;
-short   headersize;
-short   sizeprogramheader;
-short   entriesprogramheader;
-short   sizesectionheader;
-short   entriessectionheader;
-short   sectionnamelist;
-}ELFHEADER;
-
-typedef struct{
-long name;
-long type;
-long flags;
-long addr;
-long offset;
-long size;
-long link;
-long info;
-long adralign;
-long entsize;
-}ELFSECTION;
-
-typedef struct{
-char crap[16-8];
-long lba;
-long size;
-}MBRENTRY;
 MBRENTRY mbrt[4];
-
-typedef struct{
-	unsigned char filename[12];
-	unsigned char attributes; // 0x00 deletedfile | 0x01 normal file | 0x02 directory
-	unsigned long LBA;
-	unsigned long sectorcount;
-	unsigned long sizeinlastsector;
-}SFSDirectoryEntry;
-
-typedef struct{
-	unsigned long parentfile;
-	SFSDirectoryEntry ent[10];
-}SFSDirectory;
-
-void kernel_main();
-void kernel_print(char* msg);
-void putc(char deze);
-void puti(int a);
-void puth(int a);
-void putH(char a);
-void putN(char a);
-inline unsigned char inportb(unsigned int port);
-inline unsigned short inportw(unsigned int port);
-inline void outportb(unsigned int port,unsigned char value);
-inline void outportw(unsigned int port,unsigned short value);
-void lidt();
-void setInterrupt(int i, unsigned long base);
-void keyboard_init();
-void readRawCDROM(long lba,char count,char* locationx);
-void readRawHDD(long LBA,char count,char* locationx);
-void ata_device_detect(ata_device dev);
-void ata_init();
-void initBootCDROM();
-void dirBootCDROM();
-void openFileBootCDROM();
-void dirFAT();
-void openFileFAT();
-int charstoint(char a,char b,char c,char d);
-void registerMount(unsigned char mountname[6],ata_device device,unsigned long loadfile,unsigned long writefile,unsigned long dir,int partitionselect);
-void cls();
-char getc();
-void setColor(char x);
-int selectDevice();
-void kernelcall(long address);
-void selectFile();
-void mouse_init();
-void serials_init();
-void init_serial(COMPort port);
-char read_serial(COMPort port);
-void write_serial(COMPort port,char a);
-void initTasking();
-void yield();
 
 char filelistbuffer[500];
 char selectedfile[100];
 FilesystemMountpoint mnt;
 char* videomemory = (char*) 0xb8000;
-int vidmempoint = 0;
-char background = 0x7f;
-char curx = 0;
-char cury = 0;
+unsigned int vidmempoint = 0;
+unsigned char background = 0x7f;
+unsigned char curx = 0;
+unsigned char cury = 0;
+
+char* programloadseg = (char*) 0x1000;
 
 void kernel_main(){
 	kernel_print("Loading...");
@@ -203,14 +44,13 @@ void kernel_main(){
 	cdromfloor = 1;
 	lidt();
 	keyboard_init();
-	mouse_init();
+	kernel_print("Enable mouse? Y=yes, Other=no");
+	if(getc()=='y'){
+		mouse_init();
+	}
 	ata_init();
 	serials_init();
 	initTasking();
-	kernel_print("Ik begin" );
-	yield();
-	kernel_print("I returned...yay!");
-	getc();
 	mnt = mounts[selectDevice()];
 	while(1){
 		kernelcall(mnt.dir);
@@ -220,19 +60,13 @@ void kernel_main(){
 			cls();
 			ELFHEADER* headers = (ELFHEADER*)0x2000;
 			ELFHEADER header = headers[0];
-			if((header.A[0]==0x7F&&header.B[0]=='E'&&header.B[1]=='L'&&header.B[2]=='F')){
-				ELFSECTION* progsect = (ELFSECTION*)(0x2000+header.segmentheaders);
-				int i = 0;
-				for(i = 0 ; i < header.entriessectionheader ; i++){
-				        if(progsect[i].addr!=0){
-				                int z = 0;
-				                char* buffer = (char*)progsect[i].addr;
-				                for(z = 0 ; z < progsect[i].size ; z++){
-				                        buffer[z] = ((char*)progsect[i].offset+0x2000)[z];
-				                }
-				        }
-                		}
-                		kernelcall(header.entrypoint);
+			if((header.e_ident[0]==ELFMAG0&&header.e_ident[1]==ELFMAG1&&header.e_ident[2]==ELFMAG2&&header.e_ident[3]==ELFMAG3)){
+				long execlocation = loadExecutable((void *)0x2000);
+				if(execlocation!=0){
+					kernelcall(execlocation);
+				}else{
+					kernel_print("Unable to execute program!\n");
+				}
 			}else{
 				kernel_print("[R]un, [D]isplay or Cancel?");
 				int i = 0;
@@ -246,6 +80,7 @@ void kernel_main(){
 					}
 				}
 			}
+			kernel_print("Program finished!\n");
 			getc();
 			asm volatile("jmp kernel_main");
 		}
@@ -254,8 +89,9 @@ void kernel_main(){
 }
 
 
+
 //
-// S E R I A L   P O R T   C O N T R O L L 
+// S E R I A L   P O R T   C O N T R O L L
 //
 //
 
@@ -281,7 +117,7 @@ int serial_received(COMPort port) {
 	int PORT = port.port;
    return inportb(PORT + 5) & 1;
 }
- 
+
 char read_serial(COMPort port) {
 	int PORT = port.port;
    while (serial_received(port) == 0);
@@ -292,32 +128,32 @@ int is_transmit_empty(COMPort port) {
 	int PORT = port.port;
    return inportb(PORT + 5) & 0x20;
 }
- 
+
 void write_serial(COMPort port,char a) {
 	int PORT = port.port;
    while (is_transmit_empty(port) == 0);
- 
+
    outportb(PORT,a);
 }
 
 
 //
-// G L O B A L   F I L E S Y S T E M   C O N T R O L L 
+// G L O B A L   F I L E S Y S T E M   C O N T R O L L
 //
 //
 
 void selectFile(){
-	int s = 0;
+	unsigned int s = 0;
 	while(1){
 		setColor(0x7F);
 		cls();
 		setColor(0x52);
 		kernel_print(" Select a file                                Sanderslando Operating System 2.0 ");
-		int i = 0;
+		unsigned int i = 0;
 		int e = 0;
 		int fo = 0;
 		while(1){
-			setColor(i==s?0x5f:0x7F);
+			setColor((unsigned int)i==(unsigned int)s?0x5f:0x7F);
 			putc(' ');
 			int z = 0;
 			int t = 0;
@@ -326,7 +162,7 @@ void selectFile(){
 				if(deze==0x00){fo=1;break;}
 				if(deze==';'){break;}
 				putc(deze);
-				if(i==s){
+				if((unsigned int)i==(unsigned int)s){
 					selectedfile[t++] = deze;
 					selectedfile[t] = 0x00;
 				}
@@ -344,19 +180,19 @@ void selectFile(){
 	}
 }
 
-void kernelcall(long address){ 
+void kernelcall(long address){
 	asm volatile ("call %0": : "r"(address));
 }
 
 
 int selectDevice(){
-	int s = 0;
+	unsigned int s = 0;
 	while(1){
 		setColor(0x7F);
 		cls();
 		setColor(0x52);
 		kernel_print(" Select a device                              Sanderslando Operating System 2.0 ");
-		int i = 0;
+		unsigned int i = 0;
 		for( i = 0 ; i < mountcount ; i++){
 			setColor(i==s?0x5f:0x7F);
 			putc(' ');putc(mounts[i].mountname[0]);putc(mounts[i].mountname[1]);putc(mounts[i].mountname[2]);putc(mounts[i].mountname[3]);putc(mounts[i].mountname[4]);putc(mounts[i].mountname[5]);putc(mounts[i].mountname[6]);
@@ -409,20 +245,47 @@ void dirSFS(){
 //
 //
 
+typedef struct{
+	unsigned char filename[8];
+	unsigned char extension[3];
+	unsigned char attributes;
+	unsigned char caseinfo;
+	unsigned char createtime;
+	unsigned short hourandminute;
+	unsigned short yearmontday;
+	unsigned short lastaccesday;
+	unsigned short highbytes;
+	unsigned short lastmodifiedtime;
+	unsigned short lastmodifieddate;
+	unsigned short lowbytes;
+	unsigned long size;
+}FATTableEntry;
+
+
+
 void openFileFAT(){}
 
 void dirFAT(){
 	char* buffer = (char*) 0x2000;
-	readRawHDD(mbrt[mnt.partitionselect].lba,1,buffer);
-	short bytesperfat = ((buffer[11])|(buffer[12]<<8));;
-	char sectorspercluster = buffer[13];
-	long epistel = buffer[0x2c+3] | (buffer[0x2c+2]<< 8) | (buffer[0x2c+1] << 16) | (buffer[0x2c+0] << 24);//((long*)buffer[0x2c])[0];
-	//putH(swap(0xAB));putc(' ');
-	long locroot = 4096;//sectorspercluster*epistel;//0x8000;//0;
-	//cls();
-	readRawHDD(mbrt[mnt.partitionselect].lba+locroot,1,buffer);
-	int i = 0;
-	for(i = 0 ; i < 512 ; i++){putc(buffer[i]);}
+	unsigned long Partition_LBA_Begin = mbrt[mnt.partitionselect].lba;
+	readRawHDD(Partition_LBA_Begin,1,buffer);
+	unsigned short Number_of_Reserved_Sectors = ((short*)0x200E)[0];
+	unsigned char Number_of_FATs = buffer[0x10];
+	unsigned long Sectors_Per_FAT = ((long*)0x2024)[0];
+//	unsigned long fat_begin_lba = Partition_LBA_Begin + Number_of_Reserved_Sectors;
+	unsigned long cluster_begin_lba = Partition_LBA_Begin + Number_of_Reserved_Sectors + (Number_of_FATs * Sectors_Per_FAT);
+	char* buf2 = (char*) 0x2000;
+	readRawHDD(cluster_begin_lba,1,buf2);
+	int cluster = 11;
+	int cntx = 0;
+	while(cluster<512){
+		cntx++;
+		if(cntx==64){
+			cntx = 0;
+			putc('X');
+		}
+		putc(buf2[cluster++]);
+	}
 	getc();
 }
 
@@ -437,7 +300,7 @@ void openFileBootCDROM(){
 			DIRTABLEENTRY E = dirent[cdromfloor-1];
 			cdromfloor = E.ParntDir;
 		}else{
-			int i = 0;
+			unsigned int i = 0;
 			for( i = 0 ; i < direntcnt ; i++){
 				DIRTABLEENTRY E = dirent[i];
 				int z = 0;
@@ -478,7 +341,7 @@ void openFileBootCDROM(){
 void dirBootCDROM(){
 	int selector = 0;
 	char* buffer = (char*) 0x2000;
-	signed int i = 0;
+	unsigned int i = 0;
 	for(i = 0 ; i < (signed int)sizeof(filelistbuffer) ; i++){
 		filelistbuffer[i] = 0x00;
 	}
@@ -501,7 +364,7 @@ void dirBootCDROM(){
 	i = 0;
 	filentcnt = 0;
 	while(1){
-		
+
 		if(buffer[i]==';'&&buffer[i+1]=='1'){
 			// we gaan eerst proberen om de volledige tekst te krijgen en dan alles kopieren naar de file
 			char sucnt = 1;
@@ -537,7 +400,7 @@ void dirBootCDROM(){
 		}
 	}
 	filelistbuffer[selector++] = 0x00;
-	
+
 }
 
 void initBootCDROM(){
@@ -564,15 +427,15 @@ void initBootCDROM(){
         while(1){
                  dirent[direntcnt].LengthOfDirIdent = buffer[gdx++];
                  dirent[direntcnt].ExtAttrLngth = buffer[gdx++];
-                 int oxaA = buffer[gdx++];
-                 int oxaB = buffer[gdx++];
-                 int oxaC = buffer[gdx++];
-                 int oxaD = buffer[gdx++];
+                 unsigned int oxaA = buffer[gdx++];
+                 unsigned int oxaB = buffer[gdx++];
+                 unsigned int oxaC = buffer[gdx++];
+                 unsigned int oxaD = buffer[gdx++];
                  dirent[direntcnt].ExtLBA = charstoint(oxaA,oxaB,oxaC,oxaD);
-                 int oxaE = buffer[gdx++];
-                 int oxaF = buffer[gdx++];
+                 unsigned int oxaE = buffer[gdx++];
+                 unsigned int oxaF = buffer[gdx++];
                  dirent[direntcnt].ParntDir = charstoint(0,0,oxaE,oxaF);
-                 int eA = 0;
+                 unsigned int eA = 0;
                  for(eA = 0 ; eA < dirent[direntcnt].LengthOfDirIdent ; eA++){
                  	dirent[direntcnt].dirident[eA] = buffer[gdx++];
                  }
@@ -644,9 +507,9 @@ int mousex = 0;
 int mousey = 0;
 void mouse_handler(){
   static unsigned char cycle = 0;
-  static char mouse_bytes[3];
+  static unsigned char mouse_bytes[3];
   mouse_bytes[cycle++] = inportb(0x60);
- 
+
   if (cycle == 3) { // if we have all the 3 bytes...
     cycle = 0; // reset the counter
     // do what you wish with the bytes, this is just a sample
@@ -791,6 +654,14 @@ void puth(int a){
 	putH((a>>8)&0x00ff);
 }
 
+void putL(long a){
+	unsigned char * p = (unsigned char*)&a;
+	putH(p[3]);
+	putH(p[2]);
+	putH(p[1]);
+	putH(p[0]);
+}
+
 void putN(char a){
 	if(a==0x00){putc('0');}
 	if(a==0x01){putc('1');}
@@ -813,7 +684,7 @@ void putN(char a){
 void putH(char a){
 	putN((a>>4)&0x000f);
 	putN(a&0x000f);
-	
+
 }
 
 
@@ -974,7 +845,7 @@ void readRawHDD(long LBA,char count,char* locationx){
 	int status;
         while((status = inportb(hdddevice.io_base+7)) & 0x80 ){
                 if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
-                asm volatile("pause"); 
+                asm volatile("pause");
         }
         int U = 0;
         int i = 0;
@@ -1010,7 +881,7 @@ void readRawCDROM(long lba,char count,char* locationx){//E
 	char status;
 	while((status = inportb(cdromdevice.io_base+7)) & 0x80 ){
 		if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
-		asm volatile("pause"); 
+		asm volatile("pause");
 	}
 	if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
 	while(!((status = inportb(cdromdevice.io_base+7))&0x8) && !(status & 0x1)){
@@ -1041,7 +912,7 @@ void readRawCDROM(long lba,char count,char* locationx){//E
 	int U = 0;
         while((status = inportb(cdromdevice.io_base+7)) & 0x80 ){
                 if((status >> 0) & 1){kernel_print("READERROR");for(;;);}
-                asm volatile("pause"); 
+                asm volatile("pause");
         }
 
 	for(i = 0 ; i < (ATAPI_SECTOR_SIZE/2)*count ; i++){
@@ -1271,50 +1142,30 @@ inline void outportw(unsigned int port,unsigned short value){
 //
 // M U L T I T A S K I N G
 // TutorialURL: http://wiki.osdev.org/Kernel_Multitasking
-//
 
-typedef struct {
-    unsigned long eax;
-    unsigned long ebx;
-    unsigned long ecx;
-    unsigned long edx;
-    unsigned long esi;
-    unsigned long edi;
-    unsigned long esp;
-    unsigned long ebp;
-    unsigned long eip;
-    unsigned long eflags;
-    unsigned long cr3;
-} Registers;
- 
-typedef struct {
-    Registers regs;
-    struct Task *next;
-} Task;
 extern void switchTask(unsigned long a,unsigned long b);
- 
+
 static Task *runningTask;
 static Task mainTask;
 static Task otherTask;
- 
+
 static void otherMain() {
     kernel_print("Hello multitasking world!"); // Not implemented here...
     yield();
 }
- 
+
 void initTasking() {
     // Get EFLAGS and CR3
     asm volatile("movl %%cr3, %%eax; movl %%eax, %0;":"=m"(mainTask.regs.cr3)::"%eax");
     asm volatile("pushfl; movl (%%esp), %%eax; movl %%eax, %0; popfl;":"=m"(mainTask.regs.eflags)::"%eax");
     register long counter asm("esp");
- 	mainTask.regs.esp = counter;
+   mainTask.regs.esp = counter;
     createTask(&otherTask, otherMain, mainTask.regs.eflags, (unsigned long*)mainTask.regs.cr3);
-    mainTask.next = &otherTask;
-    otherTask.next = &mainTask;
- 
+    mainTask.next = (struct Task *)&otherTask;
+    otherTask.next = (struct Task *)&mainTask;
     runningTask = &mainTask;
 }
- 
+
 void createTask(Task *task, void (*main)(), unsigned long flags, unsigned long *pagedir) {
     task->regs.eax = 0;
     task->regs.ebx = 0;
@@ -1328,9 +1179,33 @@ void createTask(Task *task, void (*main)(), unsigned long flags, unsigned long *
     task->regs.esp = (unsigned long) mainTask.regs.esp;//allocPage() + 0x1000; // Not implemented here
     task->next = 0;
 }
- 
+
 void yield() {
     Task *last = runningTask;
-    runningTask = runningTask->next;
+    runningTask = (Task *)runningTask->next;
     switchTask((unsigned long)&last->regs, (unsigned long)&runningTask->regs);
+}
+
+
+//
+// S T R I N G   O P T I O N S
+//
+//
+//
+//
+
+int cmpstr(char* bufferA,char* bufferB,int size){
+	for(int i = 0 ; i < size ; i++){
+		if(bufferA[i]!=bufferB[i]){
+			return 0;
+		}
+	}
+	return 1;
+}
+
+unsigned int strlen(char* buffer){
+	int i = 0;
+	char deze;
+	while((deze = buffer[i++])!=0x00){}
+	return i;
 }
