@@ -13,8 +13,10 @@ gcc -c src/kernel/dev/ps2/mouse.c -o build/ps2mice.o -std=gnu99 -ffreestanding -
 gcc -c src/kernel/dev/ps2/keyboard.c -o build/ps2keyboard.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra -I include
 gcc -c src/kernel/video.c -o build/video.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra -I include
 gcc -c src/kernel/dev/ata/atapi.c -o build/atapi.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra -I include
+gcc -c src/kernel/dev/ata/ata.c -o build/ata.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra -I include
+gcc -c src/kernel/dev/ata/atadetection.c -o build/atadetection.o -std=gnu99 -ffreestanding -O2 -Wall -Wextra -I include
 as src/kernel/i386/switch.a -o build/switch.o
-ld -n -T src/linker.ld -o myos.bin  build/boot.o build/kernel.o build/ps2keyboard.o build/ps2mice.o build/video.o build/serialports.o build/interrupts.o build/switch.o build/elf.o build/string.o build/ports.o build/multitasking.o
+ld -n -T src/linker.ld -o myos.bin  build/boot.o build/kernel.o build/atadetection.o build/atapi.o build/ata.o build/ps2keyboard.o build/ps2mice.o build/video.o build/serialports.o build/interrupts.o build/switch.o build/elf.o build/string.o build/ports.o build/multitasking.o
 
 if grub-file --is-x86-multiboot myos.bin; then
 	echo multiboot confirmed
