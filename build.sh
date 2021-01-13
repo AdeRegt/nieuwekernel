@@ -1,3 +1,4 @@
+#hi
 rm -f boot.o
 rm -f kernel.o
 rm -f myos.bin
